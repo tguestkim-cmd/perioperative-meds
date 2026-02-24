@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Quick reference guide for perioperative medication management">
+    <meta name="theme-color" content="#1e3a8a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="PreOp Meds Beta">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <title>PreOp Medication Lookup — BETA</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Prevent scrolling when modal is open */
+        body.modal-open {
+            overflow: hidden;
+        }
+        /* Beta badge pulse */
+        @keyframes betaPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .beta-badge {
+            animation: betaPulse 2.5s ease-in-out infinite;
+        }
+        /* Checkbox animation */
+        @keyframes checkPop {
+            0% { transform: scale(0.8); }
+            60% { transform: scale(1.15); }
+            100% { transform: scale(1); }
+        }
+        .check-pop {
+            animation: checkPop 0.25s ease-out;
+        }
+        /* Slide-up for report modal */
+        @keyframes slideUp {
+            from { transform: translateY(30px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .slide-up {
+            animation: slideUp 0.25s ease-out;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+
+        // ─── Medication database ───────────────────────────────────────────────────
+        const medications = [
+            { name: 'Isosorbide mononitrate', tradeName: 'Imdur, Ismo, Monoket', drugClass: 'Antianginal - Nitrates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue for angina prophylaxis; coronary vasodilation important' },
+            { name: 'Isosorbide dinitrate', tradeName: '', drugClass: 'Antianginal - Nitrates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue for angina prophylaxis; coronary vasodilation important' },
+            { name: 'Nitroglycerin sublingual', tradeName: 'Nitrostat, Nitrobid, Nitromist', drugClass: 'Antianginal - Nitrates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Nitroglycerin patch', tradeName: 'Nitro-Dur', drugClass: 'Antianginal - Nitrates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue wearing patch; important for angina prevention' },
+            { name: 'Warfarin', tradeName: 'Coumadin', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '5-7 days before', rationale: 'INR should be <1.5; bridge with heparin if high risk<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Apixaban', tradeName: 'Eliquis', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '2-3 days before', rationale: 'Longer if renal impairment; consider 3-4 days for major surgery<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Rivaroxaban', tradeName: 'Xarelto', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '2-3 days before', rationale: 'Longer if renal impairment; consider 3-4 days for major surgery<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Dabigatran', tradeName: 'Pradaxa', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '2-4 days before', rationale: 'Depends on renal function; 4-5 days if CrCl <50<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Edoxaban', tradeName: 'Savaysa', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '2-3 days before', rationale: 'Longer if renal impairment<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Heparin', tradeName: 'IV', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '4-6 hours before', rationale: 'Short half-life; restart postoperatively<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Enoxaparin', tradeName: 'Lovenox', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '12-24 hours before', rationale: '12h for prophylactic dose, 24h for therapeutic<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Fondaparinux', tradeName: 'Arixtra', drugClass: 'Anticoagulants', recommendation: 'COORDINATE STOP', timing: '3-4 days before', rationale: 'Long half-life; no reversal agent<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Aspirin - low-dose', tradeName: 'Bayer, Ecotrin', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: 'Day of surgery', rationale: 'Continue for most surgeries except intracranial/spinal<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Aspirin - high-dose', tradeName: '', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: '5-7 days before', rationale: 'For non-cardiac surgery without stent<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Clopidogrel', tradeName: 'Plavix', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: '5-7 days before', rationale: 'Discuss with cardiologist if recent stent (<1 year)<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Prasugrel', tradeName: 'Effient', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: '7 days before', rationale: 'More potent; requires longer washout<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Ticagrelor', tradeName: 'Brilinta', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: '5-7 days before', rationale: 'Discuss with cardiologist if recent stent<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Dipyridamole', tradeName: 'Persantine', drugClass: 'Antiplatelet Agents', recommendation: 'COORDINATE STOP', timing: '2-3 days before', rationale: 'Often combined with aspirin (Aggrenox)<br><br><strong>⚕️ Management by Surgeon and/or PCP or Cardiologist</strong>' },
+            { name: 'Lisinopril', tradeName: 'Prinivil, Zestril', drugClass: 'Antihypertensives - ACE Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Enalapril', tradeName: 'Vasotec', drugClass: 'Antihypertensives - ACE Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Ramipril', tradeName: 'Altace', drugClass: 'Antihypertensives - ACE Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Benazepril', tradeName: 'Lotensin', drugClass: 'Antihypertensives - ACE Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Losartan', tradeName: 'Cozaar', drugClass: 'Antihypertensives - ARBs', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Valsartan', tradeName: 'Diovan', drugClass: 'Antihypertensives - ARBs', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Olmesartan', tradeName: 'Benicar', drugClass: 'Antihypertensives - ARBs', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Irbesartan', tradeName: 'Avapro', drugClass: 'Antihypertensives - ARBs', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause refractory hypotension with anesthesia' },
+            { name: 'Metoprolol', tradeName: 'Lopressor, Toprol-XL', drugClass: 'Antihypertensives - Beta-blockers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important to continue; risk of rebound tachycardia/HTN' },
+            { name: 'Atenolol', tradeName: 'Tenormin', drugClass: 'Antihypertensives - Beta-blockers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important to continue; risk of rebound tachycardia/HTN' },
+            { name: 'Carvedilol', tradeName: 'Coreg', drugClass: 'Antihypertensives - Beta-blockers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important to continue; risk of rebound tachycardia/HTN' },
+            { name: 'Propranolol', tradeName: 'Inderal', drugClass: 'Antihypertensives - Beta-blockers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important to continue; risk of rebound tachycardia/HTN' },
+            { name: 'Amlodipine', tradeName: 'Norvasc', drugClass: 'Antihypertensives - CCB', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Diltiazem', tradeName: 'Cardizem', drugClass: 'Antihypertensives - CCB', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Nifedipine', tradeName: 'Procardia', drugClass: 'Antihypertensives - CCB', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Verapamil', tradeName: 'Calan', drugClass: 'Antihypertensives - CCB', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Furosemide', tradeName: 'Lasix', drugClass: 'Antihypertensives - Diuretics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause hypovolemia and electrolyte abnormalities' },
+            { name: 'Hydrochlorothiazide', tradeName: 'HCTZ', drugClass: 'Antihypertensives - Diuretics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause hypovolemia and electrolyte abnormalities' },
+            { name: 'Spironolactone', tradeName: 'Aldactone', drugClass: 'Antihypertensives - Diuretics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Monitor potassium levels' },
+            { name: 'Chlorthalidone', tradeName: 'Thalitone', drugClass: 'Antihypertensives - Diuretics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'May cause hypovolemia and electrolyte abnormalities' },
+            { name: 'Clonidine', tradeName: 'Catapres', drugClass: 'Antihypertensives - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of rebound hypertension if stopped' },
+            { name: 'Hydralazine', tradeName: 'Apresoline', drugClass: 'Antihypertensives - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Amiodarone', tradeName: 'Cordarone, Pacerone', drugClass: 'Antiarrhythmics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important to maintain therapeutic levels' },
+            { name: 'Flecainide', tradeName: 'Tambocor', drugClass: 'Antiarrhythmics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Digoxin', tradeName: 'Lanoxin', drugClass: 'Antiarrhythmics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monitor levels; check electrolytes' },
+            { name: 'Sotalol', tradeName: 'Betapace', drugClass: 'Antiarrhythmics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monitor QT interval' },
+            { name: 'Atorvastatin', tradeName: 'Lipitor', drugClass: 'Statins', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'May have anti-inflammatory benefits perioperatively' },
+            { name: 'Simvastatin', tradeName: 'Zocor', drugClass: 'Statins', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'May have anti-inflammatory benefits perioperatively' },
+            { name: 'Rosuvastatin', tradeName: 'Crestor', drugClass: 'Statins', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'May have anti-inflammatory benefits perioperatively' },
+            { name: 'Pravastatin', tradeName: 'Pravachol', drugClass: 'Statins', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'May have anti-inflammatory benefits perioperatively' },
+            { name: 'Insulin glargine', tradeName: 'Lantus, Basaglar', drugClass: 'Diabetes - Insulin', recommendation: 'ADJUST', timing: 'Day of surgery', rationale: 'Continue at 50-80% of usual dose; monitor glucose' },
+            { name: 'Insulin detemir', tradeName: 'Levemir', drugClass: 'Diabetes - Insulin', recommendation: 'ADJUST', timing: 'Day of surgery', rationale: 'Continue at 50-80% of usual dose; monitor glucose' },
+            { name: 'Insulin degludec', tradeName: 'Tresiba', drugClass: 'Diabetes - Insulin', recommendation: 'ADJUST', timing: 'Day of surgery', rationale: 'Continue at 50-80% of usual dose; monitor glucose' },
+            { name: 'Insulin lispro', tradeName: 'Humalog', drugClass: 'Diabetes - Insulin', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'NPO; use sliding scale as needed' },
+            { name: 'Insulin aspart', tradeName: 'Novolog', drugClass: 'Diabetes - Insulin', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'NPO; use sliding scale as needed' },
+            { name: 'Regular insulin', tradeName: 'Humulin R, Novolin R', drugClass: 'Diabetes - Insulin', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'NPO; use sliding scale as needed' },
+            { name: 'NPH insulin', tradeName: 'Humulin N, Novolin N', drugClass: 'Diabetes - Insulin', recommendation: 'ADJUST', timing: 'Morning of surgery', rationale: 'Give 50% of usual dose; monitor glucose' },
+            { name: 'Insulin pump', tradeName: '', drugClass: 'Diabetes - Insulin', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue basal rate; hold boluses while NPO' },
+            { name: 'Metformin', tradeName: 'Glucophage', drugClass: 'Diabetes - Biguanides', recommendation: 'STOP', timing: 'Day of surgery', rationale: 'Risk of lactic acidosis; can restart when eating/drinking' },
+            { name: 'Metformin ER', tradeName: 'Glucophage XR, Fortamet', drugClass: 'Diabetes - Biguanides', recommendation: 'STOP', timing: 'Day of surgery', rationale: 'Risk of lactic acidosis; can restart when eating/drinking' },
+            { name: 'Glipizide', tradeName: 'Glucotrol', drugClass: 'Diabetes - Sulfonylureas', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'Risk of hypoglycemia while NPO' },
+            { name: 'Glyburide', tradeName: 'DiaBeta, Micronase', drugClass: 'Diabetes - Sulfonylureas', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'Risk of hypoglycemia while NPO' },
+            { name: 'Glimepiride', tradeName: 'Amaryl', drugClass: 'Diabetes - Sulfonylureas', recommendation: 'HOLD', timing: 'Morning of surgery', rationale: 'Risk of hypoglycemia while NPO' },
+            { name: 'Sitagliptin', tradeName: 'Januvia', drugClass: 'Diabetes - DPP-4 Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; low hypoglycemia risk' },
+            { name: 'Linagliptin', tradeName: 'Tradjenta', drugClass: 'Diabetes - DPP-4 Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; low hypoglycemia risk' },
+            { name: 'Saxagliptin', tradeName: 'Onglyza', drugClass: 'Diabetes - DPP-4 Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; low hypoglycemia risk' },
+            { name: 'Alogliptin', tradeName: 'Nesina', drugClass: 'Diabetes - DPP-4 Inhibitors', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; low hypoglycemia risk' },
+            { name: 'Empagliflozin', tradeName: 'Jardiance', drugClass: 'Diabetes - SGLT2 Inhibitors', recommendation: 'STOP', timing: '3 days before', rationale: 'Risk of euglycemic DKA and hypovolemia' },
+            { name: 'Canagliflozin', tradeName: 'Invokana', drugClass: 'Diabetes - SGLT2 Inhibitors', recommendation: 'STOP', timing: '3 days before', rationale: 'Risk of euglycemic DKA and hypovolemia' },
+            { name: 'Dapagliflozin', tradeName: 'Farxiga', drugClass: 'Diabetes - SGLT2 Inhibitors', recommendation: 'STOP', timing: '3 days before', rationale: 'Risk of euglycemic DKA and hypovolemia' },
+            { name: 'Ertugliflozin', tradeName: 'Steglatro', drugClass: 'Diabetes - SGLT2 Inhibitors', recommendation: 'STOP', timing: '4 days before', rationale: 'Risk of euglycemic DKA and hypovolemia' },
+            { name: 'Semaglutide', tradeName: 'Ozempic, Wegovy, Rybelsus', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Dulaglutide', tradeName: 'Trulicity', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Tirzepatide', tradeName: 'Mounjaro, Zepbound', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Liraglutide', tradeName: 'Victoza, Saxenda', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Exenatide', tradeName: 'Byetta', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Exenatide ER', tradeName: 'Bydureon', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Lixisenatide', tradeName: 'Adlyxin', drugClass: 'Diabetes - GLP-1 Agonists', recommendation: 'COORDINATE', timing: 'Depends on indication', rationale: 'FOR DIABETES: May continue medication but MUST be on clear liquid diet 24 hours before hospital arrival time. This reduces aspiration risk from delayed gastric emptying.<br><br><br><br>FOR WEIGHT LOSS: Stop 1 week or more before surgery. MUST be on clear liquid diet 24 hours before hospital arrival time.<br><br><br><br>Note: All GLP-1 medications delay gastric emptying which increases aspiration risk during anesthesia.' },
+            { name: 'Pioglitazone', tradeName: 'Actos', drugClass: 'Diabetes - Other Oral', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; may cause fluid retention' },
+            { name: 'Rosiglitazone', tradeName: 'Avandia', drugClass: 'Diabetes - Other Oral', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Can continue or hold; may cause fluid retention' },
+            { name: 'Levothyroxine', tradeName: 'Synthroid, Levoxyl', drugClass: 'Thyroid', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water' },
+            { name: 'Liothyronine', tradeName: 'Cytomel', drugClass: 'Thyroid', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water' },
+            { name: 'Methimazole', tradeName: 'Tapazole', drugClass: 'Thyroid', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important for thyroid storm prevention' },
+            { name: 'Propylthiouracil', tradeName: 'PTU', drugClass: 'Thyroid', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important for thyroid storm prevention' },
+            { name: 'Prednisone', tradeName: 'Deltasone', drugClass: 'Corticosteroids', recommendation: 'CONTINUE + STRESS', timing: 'Day of surgery', rationale: 'Continue + stress dose coverage (e.g., hydrocortisone 100mg)' },
+            { name: 'Methylprednisolone', tradeName: 'Medrol', drugClass: 'Corticosteroids', recommendation: 'CONTINUE + STRESS', timing: 'Day of surgery', rationale: 'Continue + stress dose coverage' },
+            { name: 'Dexamethasone', tradeName: 'Decadron', drugClass: 'Corticosteroids', recommendation: 'CONTINUE + STRESS', timing: 'Day of surgery', rationale: 'Continue + stress dose coverage' },
+            { name: 'Hydrocortisone', tradeName: 'Cortef', drugClass: 'Corticosteroids', recommendation: 'CONTINUE + STRESS', timing: 'Day of surgery', rationale: 'Continue + stress dose coverage' },
+            { name: 'Fluticasone', tradeName: 'Flovent, Flonase', drugClass: 'Corticosteroids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Minimal systemic effects' },
+            { name: 'Budesonide', tradeName: 'Pulmicort, Rhinocort', drugClass: 'Corticosteroids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Minimal systemic effects' },
+            { name: 'Sertraline', tradeName: 'Zoloft', drugClass: 'Antidepressants - SSRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; minimal interaction with anesthesia' },
+            { name: 'Fluoxetine', tradeName: 'Prozac', drugClass: 'Antidepressants - SSRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; minimal interaction with anesthesia' },
+            { name: 'Escitalopram', tradeName: 'Lexapro', drugClass: 'Antidepressants - SSRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; minimal interaction with anesthesia' },
+            { name: 'Paroxetine', tradeName: 'Paxil', drugClass: 'Antidepressants - SSRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; minimal interaction with anesthesia' },
+            { name: 'Citalopram', tradeName: 'Celexa', drugClass: 'Antidepressants - SSRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; minimal interaction with anesthesia' },
+            { name: 'Venlafaxine', tradeName: 'Effexor', drugClass: 'Antidepressants - SNRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; monitor blood pressure' },
+            { name: 'Duloxetine', tradeName: 'Cymbalta', drugClass: 'Antidepressants - SNRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; monitor blood pressure' },
+            { name: 'Desvenlafaxine', tradeName: 'Pristiq', drugClass: 'Antidepressants - SNRI', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe; monitor blood pressure' },
+            { name: 'Bupropion', tradeName: 'Wellbutrin', drugClass: 'Antidepressants - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Mirtazapine', tradeName: 'Remeron', drugClass: 'Antidepressants - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Trazodone', tradeName: 'Desyrel', drugClass: 'Antidepressants - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Phenelzine', tradeName: 'Nardil', drugClass: 'Antidepressants - MAOIs', recommendation: 'STOP', timing: '2 weeks before', rationale: 'Risk of hypertensive crisis; discuss with psychiatrist' },
+            { name: 'Tranylcypromine', tradeName: 'Parnate', drugClass: 'Antidepressants - MAOIs', recommendation: 'STOP', timing: '2 weeks before', rationale: 'Risk of hypertensive crisis; discuss with psychiatrist' },
+            { name: 'Selegiline', tradeName: 'Emsam patch', drugClass: 'Antidepressants - MAOIs', recommendation: 'STOP', timing: '2 weeks before', rationale: 'Risk of hypertensive crisis; discuss with psychiatrist' },
+            { name: 'Lithium', tradeName: 'Lithobid, Eskalith', drugClass: 'Mood Stabilizers', recommendation: 'STOP', timing: '24 hours before', rationale: 'Risk of toxicity; monitor levels; discuss with psychiatrist' },
+            { name: 'Valproic acid', tradeName: 'Depakote', drugClass: 'Mood Stabilizers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monitor levels if concerned' },
+            { name: 'Carbamazepine', tradeName: 'Tegretol', drugClass: 'Mood Stabilizers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monitor levels if concerned' },
+            { name: 'Lamotrigine', tradeName: 'Lamictal', drugClass: 'Mood Stabilizers', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Risperidone', tradeName: 'Risperdal', drugClass: 'Antipsychotics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; generally safe to continue' },
+            { name: 'Quetiapine', tradeName: 'Seroquel', drugClass: 'Antipsychotics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; generally safe to continue' },
+            { name: 'Olanzapine', tradeName: 'Zyprexa', drugClass: 'Antipsychotics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; generally safe to continue' },
+            { name: 'Aripiprazole', tradeName: 'Abilify', drugClass: 'Antipsychotics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; generally safe to continue' },
+            { name: 'Haloperidol', tradeName: 'Haldol', drugClass: 'Antipsychotics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; generally safe to continue' },
+            { name: 'Methylphenidate', tradeName: 'Ritalin, Concerta', drugClass: 'ADHD - Stimulants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Hold stimulants on day of surgery; may increase cardiovascular effects with anesthesia' },
+            { name: 'Dexmethylphenidate', tradeName: 'Focalin', drugClass: 'ADHD - Stimulants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Hold stimulants on day of surgery; may increase cardiovascular effects with anesthesia' },
+            { name: 'Amphetamine/Dextroamphetamine', tradeName: 'Adderall', drugClass: 'ADHD - Stimulants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Hold stimulants on day of surgery; may increase cardiovascular effects with anesthesia' },
+            { name: 'Lisdexamfetamine', tradeName: 'Vyvanse', drugClass: 'ADHD - Stimulants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Hold stimulants on day of surgery; may increase cardiovascular effects with anesthesia' },
+            { name: 'Dextroamphetamine', tradeName: 'Dexedrine', drugClass: 'ADHD - Stimulants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Hold stimulants on day of surgery; may increase cardiovascular effects with anesthesia' },
+            { name: 'Atomoxetine', tradeName: 'Strattera', drugClass: 'ADHD - Non-Stimulants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Non-stimulant; generally safe to continue; can take with sip of water' },
+            { name: 'Guanfacine', tradeName: 'Intuniv', drugClass: 'ADHD - Non-Stimulants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Alpha-2 agonist; continue to avoid rebound hypertension; can take with sip of water' },
+            { name: 'Clonidine', tradeName: 'Kapvay', drugClass: 'ADHD - Non-Stimulants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Alpha-2 agonist for ADHD; continue to avoid rebound hypertension; can take with sip of water' },
+            { name: 'Viloxazine', tradeName: 'Qelbree', drugClass: 'ADHD - Non-Stimulants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Non-stimulant SNRI; generally safe to continue; can take with sip of water' },
+            { name: 'Alprazolam', tradeName: 'Xanax', drugClass: 'Anxiolytics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; may give preop' },
+            { name: 'Lorazepam', tradeName: 'Ativan', drugClass: 'Anxiolytics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; may give preop' },
+            { name: 'Clonazepam', tradeName: 'Klonopin', drugClass: 'Anxiolytics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; may give preop' },
+            { name: 'Diazepam', tradeName: 'Valium', drugClass: 'Anxiolytics', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Risk of withdrawal; may give preop' },
+            { name: 'Albuterol', tradeName: 'Proventil, Ventolin', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Ipratropium', tradeName: 'Atrovent', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Tiotropium', tradeName: 'Spiriva', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Salmeterol', tradeName: 'Serevent', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Fluticasone/Salmeterol', tradeName: 'Advair', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Budesonide/Formoterol', tradeName: 'Symbicort', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Should use morning of surgery' },
+            { name: 'Montelukast', tradeName: 'Singulair', drugClass: 'Asthma/COPD', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Sildenafil', tradeName: 'Revatio, Viagra', drugClass: 'Pulmonary Hypertension', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important for pulmonary vasodilation; can take with sip of water' },
+            { name: 'Tadalafil', tradeName: 'Adcirca, Cialis', drugClass: 'Pulmonary Hypertension', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important for pulmonary vasodilation; can take with sip of water' },
+            { name: 'Vardenafil', tradeName: 'Levitra', drugClass: 'Pulmonary Hypertension', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Important for pulmonary vasodilation; can take with sip of water' },
+            { name: 'Epoprostenol', tradeName: 'Flolan, Veletri', drugClass: 'Pulmonary Hypertension', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical for pulmonary hypertension; IV infusion should continue' },
+            { name: 'Oxybutynin', tradeName: 'Ditropan', drugClass: 'Overactive Bladder - Anticholinergics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Reduces risk of urinary retention and postoperative delirium; can resume postoperatively' },
+            { name: 'Tolterodine', tradeName: 'Detrol', drugClass: 'Overactive Bladder - Anticholinergics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Reduces risk of urinary retention and postoperative delirium; can resume postoperatively' },
+            { name: 'Solifenacin', tradeName: 'Vesicare', drugClass: 'Overactive Bladder - Anticholinergics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Reduces risk of urinary retention and postoperative delirium; can resume postoperatively' },
+            { name: 'Darifenacin', tradeName: 'Enablex', drugClass: 'Overactive Bladder - Anticholinergics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Reduces risk of urinary retention and postoperative delirium; can resume postoperatively' },
+            { name: 'Trospium', tradeName: 'Sanctura', drugClass: 'Overactive Bladder - Anticholinergics', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Reduces risk of urinary retention and postoperative delirium; can resume postoperatively' },
+            { name: 'Mirabegron', tradeName: 'Myrbetriq', drugClass: 'Overactive Bladder - Beta-3 Agonist', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; can take with sip of water' },
+            { name: 'Tamsulosin', tradeName: 'Flomax', drugClass: 'Benign Prostatic Hyperplasia', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; can take with sip of water' },
+            { name: 'Finasteride', tradeName: 'Proscar', drugClass: 'Benign Prostatic Hyperplasia', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; can take with sip of water' },
+            { name: 'Sildenafil', tradeName: 'Viagra', drugClass: 'Erectile Dysfunction', recommendation: 'STOP', timing: '3 days before', rationale: 'For erectile dysfunction use only; stop to reduce risk of hypotension with anesthetics; continue if used for pulmonary hypertension' },
+            { name: 'Tadalafil', tradeName: 'Cialis', drugClass: 'Erectile Dysfunction', recommendation: 'STOP', timing: '3 days before', rationale: 'For erectile dysfunction use only; stop to reduce risk of hypotension with anesthetics; continue if used for pulmonary hypertension' },
+            { name: 'Vardenafil', tradeName: 'Levitra, Staxyn', drugClass: 'Erectile Dysfunction', recommendation: 'STOP', timing: '3 days before', rationale: 'For erectile dysfunction use only; stop to reduce risk of hypotension with anesthetics' },
+            { name: 'Omeprazole', tradeName: 'Prilosec', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water; reduces aspiration risk' },
+            { name: 'Esomeprazole', tradeName: 'Nexium', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water; reduces aspiration risk' },
+            { name: 'Pantoprazole', tradeName: 'Protonix', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water; reduces aspiration risk' },
+            { name: 'Lansoprazole', tradeName: 'Prevacid', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Can take with sip of water; reduces aspiration risk' },
+            { name: 'Ranitidine', tradeName: 'Zantac', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Reduces aspiration risk' },
+            { name: 'Famotidine', tradeName: 'Pepcid', drugClass: 'Acid Suppression', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Reduces aspiration risk' },
+            { name: 'Levetiracetam', tradeName: 'Keppra', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Phenytoin', tradeName: 'Dilantin', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Valproic acid', tradeName: 'Depakote', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Carbamazepine', tradeName: 'Tegretol', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Lamotrigine', tradeName: 'Lamictal', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Topiramate', tradeName: 'Topamax', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: '', rationale: 'Critical to prevent seizures; can take with sip of water' },
+            { name: 'Lacosamide', tradeName: 'Vimpat', drugClass: 'Anticonvulsants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Prolonged PR interval and bradycardia, especially when combined with beta blockers or other antiarrhythmics' },
+            { name: 'Gabapentin', tradeName: 'Neurontin', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Pregabalin', tradeName: 'Lyrica', drugClass: 'Anticonvulsants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Carbidopa/Levodopa', tradeName: 'Sinemet, Duopa', drugClass: "Parkinson's", recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL — Do NOT discontinue. Abrupt withdrawal may trigger parkinsonian crisis or neuroleptic malignant syndrome (NMS). No IV formulation is available. Take the morning-of-surgery dose with a small sip of water. Resume oral therapy as soon as possible postoperatively — delayed resumption can cause severe immobility. If prolonged NPO is anticipated, coordinate with neurology for alternative management.' },
+            { name: 'Levodopa/Carbidopa', tradeName: 'Sinemet, Duopa', drugClass: "Parkinson's", recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL — Do NOT discontinue. Abrupt withdrawal may trigger parkinsonian crisis or neuroleptic malignant syndrome (NMS). No IV formulation is available. Take the morning-of-surgery dose with a small sip of water. Resume oral therapy as soon as possible postoperatively — delayed resumption can cause severe immobility. If prolonged NPO is anticipated, coordinate with neurology for alternative management.' },
+            { name: 'Ropinirole', tradeName: 'Requip, Requip XL', drugClass: "Parkinson's", recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL for Parkinson\'s disease — continue to prevent exacerbation and akinesia. Can be taken with a sip of water up to time of anesthetic induction.<br><br>⚠️ Caution: Ropinirole can increase the risk of hypotension when used with inhalational or intravenous anesthetics — anesthesia team should be aware.<br><br>Also used for Restless Legs Syndrome (RLS): continue through surgery to preserve symptom control. If prolonged NPO is anticipated postoperatively, contact the prescribing specialist for guidance on dose re-titration if therapy is interrupted for more than 24 hours.' },
+            { name: 'Ropinirole (Restless Legs Syndrome)', tradeName: 'Requip', drugClass: 'Restless Legs Syndrome', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue to prevent loss of RLS symptom control. Can take with a sip of water up to anesthetic induction.<br><br>⚠️ Caution: Ropinirole can increase the risk of hypotension when combined with inhalational or intravenous anesthetics — inform the anesthesia team.<br><br>Note: If therapy is interrupted for more than a few days postoperatively, doses should be re-titrated per manufacturer guidance rather than resumed at the previous dose.' },
+            { name: 'Pramipexole', tradeName: 'Mirapex, Mirapex ER', drugClass: "Parkinson's", recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL for Parkinson\'s disease — continue to prevent exacerbation. Can take with a sip of water up to time of anesthetic induction. Monitor for orthostatic hypotension perioperatively. Resume as soon as possible postoperatively.' },
+            { name: 'Rasagiline', tradeName: 'Azilect', drugClass: "Parkinson's", recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'MAO-B inhibitor; generally safe to continue. Serotonin syndrome risk with meperidine (Demerol) — avoid meperidine for perioperative analgesia. Inform anesthesia team of this interaction.' },
+            { name: 'Tacrolimus', tradeName: 'Prograf', drugClass: 'Transplant/Autoimmune', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical for transplant; can take with sip of water' },
+            { name: 'Cyclosporine', tradeName: 'Neoral, Sandimmune', drugClass: 'Transplant/Autoimmune', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Critical for transplant; can take with sip of water' },
+            { name: 'Mycophenolate', tradeName: 'CellCept', drugClass: 'Transplant/Autoimmune', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue unless surgeon requests hold' },
+            { name: 'Azathioprine', tradeName: 'Imuran', drugClass: 'Transplant/Autoimmune', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally continue' },
+            { name: 'Sirolimus', tradeName: 'Rapamune', drugClass: 'Transplant/Autoimmune', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally continue' },
+            { name: 'Adalimumab', tradeName: 'Humira', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: '1-2 doses before', rationale: 'Half-life ~2 weeks; discuss with rheumatology' },
+            { name: 'Etanercept', tradeName: 'Enbrel', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: '1 dose before', rationale: 'Half-life ~3-5 days; discuss with rheumatology' },
+            { name: 'Infliximab', tradeName: 'Remicade', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: '1-2 doses before', rationale: 'Half-life ~8-10 days; discuss with rheumatology' },
+            { name: 'Rituximab', tradeName: 'Rituxan', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'Long half-life; coordinate with prescribing specialist' },
+            { name: 'Belimumab', tradeName: 'Benlysta', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'B-cell inhibitor for lupus; discuss with rheumatology' },
+            { name: 'Ocrelizumab', tradeName: 'Ocrevus', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'B-cell depleting agent for MS; discuss with neurology' },
+            { name: 'Natalizumab', tradeName: 'Tysabri', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: "Integrin inhibitor for MS/Crohn's; discuss with specialist" },
+            { name: 'Vedolizumab', tradeName: 'Entyvio', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'Integrin inhibitor for IBD; discuss with gastroenterology' },
+            { name: 'Ustekinumab', tradeName: 'Stelara', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'IL-12/23 inhibitor for psoriasis/IBD; discuss with specialist' },
+            { name: 'Tocilizumab', tradeName: 'Actemra', drugClass: 'Biologics', recommendation: 'COORDINATE', timing: 'Varies', rationale: 'IL-6 inhibitor for RA/GCA; discuss with rheumatology' },
+            { name: 'Oxycodone', tradeName: 'OxyContin, Percocet', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Avoid withdrawal; anesthesia will manage perioperatively' },
+            { name: 'Hydrocodone', tradeName: 'Vicodin, Norco', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Avoid withdrawal; anesthesia will manage perioperatively' },
+            { name: 'Morphine', tradeName: 'MS Contin', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Avoid withdrawal; anesthesia will manage perioperatively' },
+            { name: 'Methadone', tradeName: '', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL: Continue maintenance dose to avoid withdrawal and risk of relapse. Do NOT up-titrate methadone perioperatively due to long half-life (24-36 hours).' },
+            { name: 'Tramadol', tradeName: 'Ultram', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Avoid withdrawal; anesthesia will manage perioperatively' },
+            { name: 'Fentanyl patch', tradeName: 'Duragesic', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Avoid withdrawal; leave patch in place' },
+            { name: 'Buprenorphine sublingual', tradeName: 'Suboxone, Subutex', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue for addiction treatment; consult pain/addiction medicine for perioperative management' },
+            { name: 'Buprenorphine patch', tradeName: 'Butrans', drugClass: 'Opioids', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue for chronic pain; leave patch in place' },
+            { name: 'Naltrexone', tradeName: 'Vivitrol, ReVia', drugClass: 'Opioid Antagonists', recommendation: 'STOP', timing: '48 hours before', rationale: 'Must be discontinued to allow for postoperative opioid analgesia' },
+            { name: 'Methylnaltrexone', tradeName: 'Relistor', drugClass: 'Opioid Antagonists', recommendation: 'STOP', timing: '24 hours before', rationale: 'Peripheral opioid antagonist; hold to optimize postoperative pain management' },
+            { name: 'Naloxegol', tradeName: 'Movantik', drugClass: 'Opioid Antagonists', recommendation: 'STOP', timing: '24 hours before', rationale: 'Peripheral opioid antagonist; hold to optimize postoperative pain management' },
+            { name: 'Ibuprofen', tradeName: 'Advil, Motrin', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '3-5 days before', rationale: 'Antiplatelet effect; may increase bleeding' },
+            { name: 'Naproxen', tradeName: 'Aleve, Naprosyn', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '5-7 days before', rationale: 'Longer half-life; antiplatelet effect' },
+            { name: 'Meloxicam', tradeName: 'Mobic', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '3-5 days before', rationale: 'Antiplatelet effect; may increase bleeding' },
+            { name: 'Celecoxib', tradeName: 'Celebrex', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '2-3 days before', rationale: 'Less platelet effect than traditional NSAIDs' },
+            { name: 'Diclofenac', tradeName: 'Voltaren', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '3-5 days before', rationale: 'Antiplatelet effect; may increase bleeding' },
+            { name: 'Ketorolac', tradeName: 'Toradol', drugClass: 'NSAIDs', recommendation: 'STOP', timing: '2-3 days before', rationale: 'Potent antiplatelet effect' },
+            { name: 'Methocarbamol', tradeName: 'Robaxin', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Generally safe to continue, but often held on day of surgery to avoid additive sedation with anesthesia' },
+            { name: 'Cyclobenzaprine', tradeName: 'Flexeril, Amrix', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Commonly held on day of surgery to avoid additive sedation with anesthesia' },
+            { name: 'Tizanidine', tradeName: 'Zanaflex', drugClass: 'Muscle Relaxants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Alpha-2 agonist; continue to avoid rebound hypertension and spasticity' },
+            { name: 'Baclofen', tradeName: 'Lioresal', drugClass: 'Muscle Relaxants', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'CRITICAL - Do NOT stop abruptly due to risk of severe withdrawal, seizures, and rebound spasticity' },
+            { name: 'Carisoprodol', tradeName: 'Soma', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Commonly held on day of surgery to avoid additive sedation with anesthesia' },
+            { name: 'Orphenadrine', tradeName: 'Norflex', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Commonly held on day of surgery to avoid additive sedation and anticholinergic effects' },
+            { name: 'Metaxalone', tradeName: 'Skelaxin', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Commonly held on day of surgery to avoid additive sedation with anesthesia' },
+            { name: 'Chlorzoxazone', tradeName: 'Parafon Forte', drugClass: 'Muscle Relaxants', recommendation: 'HOLD', timing: 'Day of surgery', rationale: 'Commonly held on day of surgery to avoid additive sedation with anesthesia' },
+            { name: 'Vitamin E', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'Antiplatelet effect' },
+            { name: 'Fish oil/Omega-3', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'Antiplatelet effect at high doses' },
+            { name: 'Ginkgo biloba', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'Antiplatelet effect' },
+            { name: 'Garlic supplements', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'Antiplatelet effect' },
+            { name: "St. John's Wort", tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'Drug interactions with anesthetics' },
+            { name: 'Ginseng', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'STOP', timing: '1 week before', rationale: 'May affect blood glucose and bleeding' },
+            { name: 'Vitamin D, Calcium', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe' },
+            { name: 'Multivitamin', tradeName: '', drugClass: 'Herbal/Supplements', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe' },
+            { name: 'Anastrozole', tradeName: 'Arimidex', drugClass: 'Oncology - Aromatase Inhibitors', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for breast cancer treatment' },
+            { name: 'Letrozole', tradeName: 'Femara', drugClass: 'Oncology - Aromatase Inhibitors', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for breast cancer treatment' },
+            { name: 'Exemestane', tradeName: 'Aromasin', drugClass: 'Oncology - Aromatase Inhibitors', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for breast cancer treatment' },
+            { name: 'Tamoxifen', tradeName: 'Nolvadex', drugClass: 'Oncology - SERMs', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for breast cancer prevention/treatment' },
+            { name: 'Raloxifene', tradeName: 'Evista', drugClass: 'Oncology - SERMs', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for breast cancer prevention' },
+            { name: 'Leuprolide', tradeName: 'Lupron', drugClass: 'Oncology - GnRH Agonists', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monthly/quarterly injection; continue scheduled dosing' },
+            { name: 'Goserelin', tradeName: 'Zoladex', drugClass: 'Oncology - GnRH Agonists', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Monthly/quarterly implant; continue scheduled dosing' },
+            { name: 'Bicalutamide', tradeName: 'Casodex', drugClass: 'Oncology - Antiandrogens', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for prostate cancer treatment' },
+            { name: 'Enzalutamide', tradeName: 'Xtandi', drugClass: 'Oncology - Antiandrogens', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; used for prostate cancer treatment' },
+            { name: 'Abiraterone', tradeName: 'Zytiga', drugClass: 'Oncology - Antiandrogens', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue; taken with prednisone for prostate cancer' },
+            { name: 'Phentermine', tradeName: 'Adipex-P, Lomaira', drugClass: 'Weight Loss Medications', recommendation: 'STOP', timing: '4 days before (ideally)', rationale: 'Stop 4 days prior ideally; patient may proceed to surgery if not discontinued; discuss with anesthesia team' },
+            { name: 'Phentermine/Topiramate', tradeName: 'Qsymia', drugClass: 'Weight Loss Medications', recommendation: 'STOP', timing: '4 days before (ideally)', rationale: 'Contains phentermine; stop 4 days prior ideally; patient may proceed to surgery if not discontinued; discuss with anesthesia team' },
+            { name: 'Naltrexone/Bupropion', tradeName: 'Contrave', drugClass: 'Weight Loss Medications', recommendation: 'STOP', timing: '24-48 hours before', rationale: 'Contains naltrexone (opioid antagonist); may interfere with postoperative pain management' },
+            { name: 'Dronabinol', tradeName: 'Marinol, Syndros', drugClass: 'Cannabinoid Medications', recommendation: 'STOP', timing: '3 days before', rationale: 'Synthetic THC; may interact with anesthetics; discuss with anesthesia team' },
+            { name: 'Nabilone', tradeName: 'Cesamet', drugClass: 'Cannabinoid Medications', recommendation: 'STOP', timing: '3 days before', rationale: 'Synthetic cannabinoid; may interact with anesthetics; discuss with anesthesia team' },
+            { name: 'Cannabidiol', tradeName: 'Epidiolex', drugClass: 'Cannabinoid Medications', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Pure CBD; generally safe to continue; discuss with anesthesia team' },
+            { name: 'Medical marijuana/cannabis', tradeName: '', drugClass: 'Cannabinoid Medications', recommendation: 'STOP', timing: '3-7 days before', rationale: 'Contains THC; stop to reduce anesthetic interactions and side effects' },
+            { name: 'Alendronate', tradeName: 'Fosamax', drugClass: 'Osteoporosis - Bisphosphonates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Risedronate', tradeName: 'Actonel', drugClass: 'Osteoporosis - Bisphosphonates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Ibandronate', tradeName: 'Boniva', drugClass: 'Osteoporosis - Bisphosphonates', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Denosumab', tradeName: 'Prolia', drugClass: 'Osteoporosis - Other', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Subcutaneous injection given every 6 months; not affected by surgery timing' },
+            { name: 'Estradiol patch', tradeName: 'Climara, Vivelle-Dot, Minivelle', drugClass: 'Hormone Replacement', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Transdermal HRT is NOT associated with increased VTE risk. Unlike oral estrogen, the patch avoids first-pass liver metabolism and does not increase clotting factors.' },
+            { name: 'Estrogen/Progesterone', tradeName: 'Premarin, Prempro', drugClass: 'Hormone Replacement', recommendation: 'STOP', timing: '4 weeks before', rationale: 'Increased VTE risk for major surgery; continue for minor' },
+            { name: 'Oral contraceptives', tradeName: 'various', drugClass: 'Hormone Replacement', recommendation: 'STOP', timing: '4 weeks before', rationale: 'Increased VTE risk for major surgery; continue for minor' },
+            { name: 'Testosterone', tradeName: 'AndroGel, Testim', drugClass: 'Hormone Replacement', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue' },
+            { name: 'Nicotine patch (NRT)', tradeName: 'Nicoderm CQ, Habitrol', drugClass: 'Smoking Cessation', recommendation: 'COORDINATE', timing: 'Day of surgery', rationale: 'Nicotine replacement therapy (NRT) is PREFERABLE to active smoking perioperatively. Current evidence does not show increased risk of inpatient mortality, readmission, or wound complications with NRT compared to continued smoking.<br><br>⚠️ Specialty-specific caution: Plastic and orthopedic surgeons may require complete nicotine abstinence (including NRT) before aesthetic, reconstructive, or orthopedic procedures due to concerns about bone healing, flap viability, and osseointegration. Confirm with your surgeon.<br><br>Goal: Encourage complete smoking cessation. If the patient cannot abstain entirely, NRT is safer than continued cigarette use. Ideally, smoking cessation should begin as early as possible before surgery.' },
+            { name: 'Nicotine gum (NRT)', tradeName: 'Nicorette', drugClass: 'Smoking Cessation', recommendation: 'COORDINATE', timing: 'Day of surgery', rationale: 'Nicotine replacement therapy (NRT) is PREFERABLE to active smoking perioperatively. Current evidence does not show increased risk of inpatient mortality, readmission, or wound complications with NRT compared to continued smoking.<br><br>⚠️ Specialty-specific caution: Plastic and orthopedic surgeons may require complete nicotine abstinence (including NRT) before aesthetic, reconstructive, or orthopedic procedures due to concerns about bone healing, flap viability, and osseointegration. Confirm with your surgeon.<br><br>Note: Nicotine gum should not be chewed in the immediate pre-operative period (NPO precautions apply to gum with sugar content).' },
+            { name: 'Nicotine lozenge (NRT)', tradeName: 'Nicorette Lozenge, Commit', drugClass: 'Smoking Cessation', recommendation: 'COORDINATE', timing: 'Day of surgery', rationale: 'Nicotine replacement therapy (NRT) is PREFERABLE to active smoking perioperatively. Current evidence does not show increased risk of inpatient mortality, readmission, or wound complications with NRT compared to continued smoking.<br><br>⚠️ Specialty-specific caution: Plastic and orthopedic surgeons may require complete nicotine abstinence (including NRT) before aesthetic, reconstructive, or orthopedic procedures. Confirm with your surgeon.<br><br>Note: Avoid using lozenges in the immediate pre-operative NPO window.' },
+            { name: 'Varenicline', tradeName: 'Chantix, Champix', drugClass: 'Smoking Cessation', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Generally safe to continue perioperatively; supports ongoing smoking cessation effort.<br><br>⚠️ May cause nausea, vivid dreams, or mood changes — inform anesthesia team. Some data suggest varenicline may reduce postoperative nausea when continued. Can take with a sip of water on day of surgery.' },
+            { name: 'Bupropion (Smoking Cessation)', tradeName: 'Wellbutrin SR, Zyban', drugClass: 'Smoking Cessation', recommendation: 'CONTINUE', timing: 'Day of surgery', rationale: 'Continue to support smoking cessation. Also treats depression, so abrupt discontinuation is discouraged.<br><br>Generally well-tolerated perioperatively. Lowers seizure threshold — use caution with other seizure-risk factors (electrolyte imbalance, alcohol withdrawal, CNS depressants). Can take with a sip of water on day of surgery.' },
+        ];
+
+        // ─── Disclaimer Modal ──────────────────────────────────────────────────────
+        function DisclaimerModal({ onAccept }) {
+            const [checked1, setChecked1] = useState(false);
+            const [checked2, setChecked2] = useState(false);
+            const [checked3, setChecked3] = useState(false);
+            const allChecked = checked1 && checked2 && checked3;
+
+            useEffect(() => {
+                document.body.classList.add('modal-open');
+                return () => document.body.classList.remove('modal-open');
+            }, []);
+
+            const CheckRow = ({ id, checked, onChange, label }) => (
+                <label
+                    htmlFor={id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 select-none ${checked ? 'border-indigo-500 bg-indigo-50' : 'border-gray-200 bg-gray-50 hover:border-gray-300'}`}
+                >
+                    <div className="relative flex-shrink-0 mt-0.5">
+                        <input
+                            type="checkbox"
+                            id={id}
+                            checked={checked}
+                            onChange={onChange}
+                            className="sr-only"
+                        />
+                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all duration-200 ${checked ? 'bg-indigo-600 border-indigo-600 check-pop' : 'border-gray-400 bg-white'}`}>
+                            {checked && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+                        </div>
+                    </div>
+                    <span className={`text-sm leading-relaxed ${checked ? 'text-indigo-900 font-medium' : 'text-gray-700'}`}>{label}</span>
+                </label>
+            );
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-3" style={{background: 'rgba(15,23,42,0.85)', backdropFilter: 'blur(4px)'}}>
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[95vh] flex flex-col overflow-hidden slide-up">
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-red-600 to-red-700 px-5 py-4 flex-shrink-0">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-xl">⚕️</div>
+                                <div>
+                                    <h2 className="text-white font-bold text-lg leading-tight">Clinical Use Disclaimer</h2>
+                                    <p className="text-red-100 text-xs mt-0.5">You must acknowledge all items to proceed</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Scrollable body */}
+                        <div className="overflow-y-auto flex-1 p-5">
+                            {/* Beta notice */}
+                            <div className="bg-amber-50 border-2 border-amber-300 rounded-xl p-4 mb-5">
+                                <div className="flex items-start gap-2">
+                                    <span className="text-amber-600 text-lg flex-shrink-0">🧪</span>
+                                    <div>
+                                        <p className="font-bold text-amber-900 text-sm">BETA VERSION — Not Validated for Sole Clinical Use</p>
+                                        <p className="text-amber-800 text-xs mt-1 leading-relaxed">This is pre-release software that has not undergone formal clinical validation. Outputs may contain errors or omissions and must not be used as the sole basis for patient care decisions.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Required acknowledgments */}
+                            <p className="text-sm font-bold text-gray-800 mb-3 uppercase tracking-wide">Required Acknowledgments</p>
+                            <div className="flex flex-col gap-3">
+                                <CheckRow
+                                    id="ack1"
+                                    checked={checked1}
+                                    onChange={e => setChecked1(e.target.checked)}
+                                    label="I understand this tool provides general guidance only and is NOT a substitute for clinical judgment. A licensed clinician must review all recommendations before acting on them."
+                                />
+                                <CheckRow
+                                    id="ack2"
+                                    checked={checked2}
+                                    onChange={e => setChecked2(e.target.checked)}
+                                    label="I understand that individual patient factors, comorbidities, surgery type, and prescribing physician instructions may require different management than shown here."
+                                />
+                                <CheckRow
+                                    id="ack3"
+                                    checked={checked3}
+                                    onChange={e => setChecked3(e.target.checked)}
+                                    label="I understand this is BETA software that may contain errors, and I will confirm all recommendations with the surgical team, anesthesiologist, and prescribing physicians."
+                                />
+                            </div>
+
+                            <p className="text-xs text-gray-500 mt-4 text-center italic px-2">
+                                IN ALL SITUATIONS, BEST AND CURRENT CLINICAL JUDGMENT AT THE TIME OF TREATMENT SHOULD PREVAIL.
+                            </p>
+                        </div>
+
+                        {/* Footer / CTA */}
+                        <div className="px-5 pb-5 pt-3 flex-shrink-0 border-t border-gray-100">
+                            <button
+                                onClick={allChecked ? onAccept : undefined}
+                                disabled={!allChecked}
+                                className={`w-full py-4 rounded-xl font-bold text-base transition-all duration-300 ${allChecked ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-lg hover:shadow-indigo-200 cursor-pointer' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                            >
+                                {allChecked ? '✓ I Understand — Enter Application' : `Please acknowledge all ${[checked1,checked2,checked3].filter(Boolean).length}/3 items above`}
+                            </button>
+                            {!allChecked && (
+                                <p className="text-center text-xs text-gray-400 mt-2">All three checkboxes must be checked to proceed</p>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── Report / Feedback Modal (tabbed: Error Report + Missing Medication) ────
+        function ReportErrorModal({ med, onClose, defaultTab }) {
+            const [activeTab, setActiveTab] = useState(defaultTab || 'error');
+
+            // ── Error Report state ──
+            const [errorType, setErrorType] = useState('');
+            const [errorDetails, setErrorDetails] = useState('');
+            const [errorSubmitted, setErrorSubmitted] = useState(false);
+            const [errorSubmitting, setErrorSubmitting] = useState(false);
+
+            // ── Missing Medication state ──
+            const [missingName, setMissingName] = useState('');
+            const [missingTrade, setMissingTrade] = useState('');
+            const [missingClass, setMissingClass] = useState('');
+            const [missingRec, setMissingRec] = useState('');
+            const [missingDetails, setMissingDetails] = useState('');
+            const [missingSubmitted, setMissingSubmitted] = useState(false);
+            const [missingSubmitting, setMissingSubmitting] = useState(false);
+
+            const errorTypes = [
+                'Incorrect recommendation (Continue/Hold/Stop)',
+                'Wrong timing information',
+                'Inaccurate or missing rationale',
+                'Missing trade name / brand name',
+                'Medication listed in wrong drug class',
+                'Other error or concern',
+            ];
+
+            const recOptions = ['CONTINUE', 'HOLD', 'STOP', 'ADJUST', 'COORDINATE', 'CONTINUE + STRESS', 'Not sure'];
+
+            const handleErrorSubmit = () => {
+                if (!errorType) return;
+                setErrorSubmitting(true);
+                const subject = encodeURIComponent(`[PreOp Meds Beta] Error Report: ${med ? med.name : 'General'}`);
+                const body = encodeURIComponent(
+                    `BETA ERROR REPORT — PreOp Medication Lookup\n` +
+                    `Date: ${new Date().toLocaleString()}\n\n` +
+                    `Medication: ${med ? med.name : 'N/A'}\n` +
+                    `Trade Name: ${med ? med.tradeName : 'N/A'}\n` +
+                    `Drug Class: ${med ? med.drugClass : 'N/A'}\n` +
+                    `Current Recommendation: ${med ? med.recommendation : 'N/A'}\n\n` +
+                    `Error Type: ${errorType}\n\n` +
+                    `Details:\n${errorDetails || '(none provided)'}\n`
+                );
+                window.location.href = `mailto:bslmcanesthesia@gmail.com?subject=${subject}&body=${body}`;
+                setTimeout(() => { setErrorSubmitting(false); setErrorSubmitted(true); }, 600);
+            };
+
+            const handleMissingSubmit = () => {
+                if (!missingName.trim()) return;
+                setMissingSubmitting(true);
+                const subject = encodeURIComponent(`[PreOp Meds Beta] Missing Medication: ${missingName}`);
+                const body = encodeURIComponent(
+                    `MISSING MEDICATION REPORT — PreOp Medication Lookup\n` +
+                    `Date: ${new Date().toLocaleString()}\n\n` +
+                    `Medication Name: ${missingName}\n` +
+                    `Trade / Brand Name(s): ${missingTrade || '(not provided)'}\n` +
+                    `Drug Class / Category: ${missingClass || '(not provided)'}\n` +
+                    `Suggested Recommendation: ${missingRec || '(not provided)'}\n\n` +
+                    `Additional Details / References:\n${missingDetails || '(none provided)'}\n`
+                );
+                window.location.href = `mailto:bslmcanesthesia@gmail.com?subject=${subject}&body=${body}`;
+                setTimeout(() => { setMissingSubmitting(false); setMissingSubmitted(true); }, 600);
+            };
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center p-0 md:p-4" style={{background: 'rgba(15,23,42,0.7)', backdropFilter: 'blur(3px)'}}>
+                    <div className="bg-white w-full md:max-w-md rounded-t-3xl md:rounded-2xl shadow-2xl overflow-hidden slide-up flex flex-col max-h-[92vh]">
+
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-orange-500 to-red-500 px-5 py-4 flex items-center justify-between flex-shrink-0">
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl">🚩</span>
+                                <div>
+                                    <h3 className="text-white font-bold">Submit Feedback</h3>
+                                    {med && activeTab === 'error' && <p className="text-orange-100 text-xs truncate max-w-[200px]">{med.name}</p>}
+                                </div>
+                            </div>
+                            <button onClick={onClose} className="text-white/70 hover:text-white text-2xl leading-none transition-colors">&times;</button>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex border-b border-gray-200 flex-shrink-0">
+                            <button
+                                onClick={() => setActiveTab('error')}
+                                className={`flex-1 py-3 text-sm font-semibold transition-all flex items-center justify-center gap-1.5 ${activeTab === 'error' ? 'text-orange-600 border-b-2 border-orange-500 bg-orange-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                ⚠️ Report an Error
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('missing')}
+                                className={`flex-1 py-3 text-sm font-semibold transition-all flex items-center justify-center gap-1.5 ${activeTab === 'missing' ? 'text-indigo-600 border-b-2 border-indigo-500 bg-indigo-50' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+                            >
+                                ➕ Missing Medication
+                            </button>
+                        </div>
+
+                        {/* Body — scrollable */}
+                        <div className="overflow-y-auto flex-1 p-5">
+
+                            {/* ── ERROR REPORT TAB ── */}
+                            {activeTab === 'error' && (
+                                errorSubmitted ? (
+                                    <div className="text-center py-6">
+                                        <div className="text-5xl mb-3">✅</div>
+                                        <p className="font-bold text-gray-900 text-lg mb-1">Thank you!</p>
+                                        <p className="text-gray-600 text-sm mb-4">Your report helps improve this beta tool. Your email client should have opened with the report pre-filled.</p>
+                                        <button onClick={onClose} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-colors">Close</button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {med && (
+                                            <div className="bg-gray-50 rounded-xl p-3 mb-4 border border-gray-200">
+                                                <p className="text-xs text-gray-500 uppercase tracking-wide font-semibold mb-1">Reporting error for</p>
+                                                <p className="font-bold text-gray-900">{med.name}</p>
+                                                {med.tradeName && <p className="text-gray-600 text-sm">({med.tradeName})</p>}
+                                                <p className="text-gray-500 text-xs mt-1">{med.drugClass} · {med.recommendation}</p>
+                                            </div>
+                                        )}
+
+                                        <p className="text-sm font-semibold text-gray-700 mb-2">What type of error? <span className="text-red-500">*</span></p>
+                                        <div className="flex flex-col gap-2 mb-4">
+                                            {errorTypes.map(type => (
+                                                <label key={type} className={`flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all ${errorType === type ? 'border-orange-400 bg-orange-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                                                    <input type="radio" name="errorType" value={type} checked={errorType === type} onChange={() => setErrorType(type)} className="accent-orange-500" />
+                                                    <span className="text-sm text-gray-700">{type}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+
+                                        <p className="text-sm font-semibold text-gray-700 mb-2">Additional details <span className="text-gray-400 font-normal">(optional)</span></p>
+                                        <textarea
+                                            value={errorDetails}
+                                            onChange={e => setErrorDetails(e.target.value)}
+                                            placeholder="Describe what is incorrect and what the correct information should be..."
+                                            rows={3}
+                                            className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm focus:border-orange-400 focus:ring-0 outline-none resize-none"
+                                            style={{fontSize: '16px'}}
+                                        />
+                                        <p className="text-xs text-gray-400 mt-2 mb-4">This will open your email client and send the report to bslmcanesthesia@gmail.com.</p>
+                                        <button
+                                            onClick={handleErrorSubmit}
+                                            disabled={!errorType || errorSubmitting}
+                                            className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all ${errorType && !errorSubmitting ? 'bg-orange-500 hover:bg-orange-600 text-white shadow-md cursor-pointer' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                        >
+                                            {errorSubmitting ? 'Opening email...' : '📧 Submit Error Report'}
+                                        </button>
+                                    </>
+                                )
+                            )}
+
+                            {/* ── MISSING MEDICATION TAB ── */}
+                            {activeTab === 'missing' && (
+                                missingSubmitted ? (
+                                    <div className="text-center py-6">
+                                        <div className="text-5xl mb-3">✅</div>
+                                        <p className="font-bold text-gray-900 text-lg mb-1">Thank you!</p>
+                                        <p className="text-gray-600 text-sm mb-4">Your suggestion has been noted. Your email client should have opened with the request pre-filled.</p>
+                                        <button onClick={onClose} className="bg-indigo-600 text-white px-6 py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-colors">Close</button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 mb-4">
+                                            <p className="text-xs text-indigo-800 leading-relaxed">
+                                                <strong>Know a medication that's not listed?</strong> Fill in as much detail as you can. Only the generic name is required — all other fields are optional but help us add it faster.
+                                            </p>
+                                        </div>
+
+                                        <div className="flex flex-col gap-3">
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Generic / medication name <span className="text-red-500">*</span></label>
+                                                <input
+                                                    type="text"
+                                                    value={missingName}
+                                                    onChange={e => setMissingName(e.target.value)}
+                                                    placeholder="e.g. Riociguat"
+                                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-400 focus:ring-0 outline-none"
+                                                    style={{fontSize: '16px'}}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Trade / brand name(s) <span className="text-gray-400 font-normal">(optional)</span></label>
+                                                <input
+                                                    type="text"
+                                                    value={missingTrade}
+                                                    onChange={e => setMissingTrade(e.target.value)}
+                                                    placeholder="e.g. Adempas"
+                                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-400 focus:ring-0 outline-none"
+                                                    style={{fontSize: '16px'}}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Drug class / category <span className="text-gray-400 font-normal">(optional)</span></label>
+                                                <input
+                                                    type="text"
+                                                    value={missingClass}
+                                                    onChange={e => setMissingClass(e.target.value)}
+                                                    placeholder="e.g. Pulmonary Hypertension"
+                                                    className="w-full border-2 border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:border-indigo-400 focus:ring-0 outline-none"
+                                                    style={{fontSize: '16px'}}
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Suggested perioperative recommendation <span className="text-gray-400 font-normal">(optional)</span></label>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {recOptions.map(r => (
+                                                        <button
+                                                            key={r}
+                                                            onClick={() => setMissingRec(missingRec === r ? '' : r)}
+                                                            className={`px-3 py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${missingRec === r ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-gray-50 text-gray-600 border-gray-200 hover:border-indigo-300'}`}
+                                                        >{r}</button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm font-semibold text-gray-700 mb-1">Additional details / references <span className="text-gray-400 font-normal">(optional)</span></label>
+                                                <textarea
+                                                    value={missingDetails}
+                                                    onChange={e => setMissingDetails(e.target.value)}
+                                                    placeholder="Any clinical context, rationale, timing, or references that would help..."
+                                                    rows={3}
+                                                    className="w-full border-2 border-gray-200 rounded-xl p-3 text-sm focus:border-indigo-400 focus:ring-0 outline-none resize-none"
+                                                    style={{fontSize: '16px'}}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <p className="text-xs text-gray-400 mt-3 mb-4">This will open your email client and send the request to bslmcanesthesia@gmail.com.</p>
+                                        <button
+                                            onClick={handleMissingSubmit}
+                                            disabled={!missingName.trim() || missingSubmitting}
+                                            className={`w-full py-3.5 rounded-xl font-bold text-sm transition-all ${missingName.trim() && !missingSubmitting ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md cursor-pointer' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+                                        >
+                                            {missingSubmitting ? 'Opening email...' : '📧 Submit Missing Medication'}
+                                        </button>
+                                    </>
+                                )
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // ─── Main App ──────────────────────────────────────────────────────────────
+        function MedicationLookupApp() {
+            const [disclaimerAccepted, setDisclaimerAccepted] = useState(false);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [selectedMed, setSelectedMed] = useState(null);
+            const [filterClass, setFilterClass] = useState('All');
+            const [reportMed, setReportMed] = useState(null); // null = closed, false = general, med object = specific
+
+            const drugClasses = useMemo(() => {
+                const classes = [...new Set(medications.map(m => m.drugClass))];
+                return ['All', ...classes.sort()];
+            }, []);
+
+            const filteredMeds = useMemo(() => {
+                let results = medications;
+                if (filterClass !== 'All') results = results.filter(m => m.drugClass === filterClass);
+                if (searchTerm.trim()) {
+                    const term = searchTerm.toLowerCase();
+                    results = results.filter(m =>
+                        m.name.toLowerCase().includes(term) ||
+                        m.tradeName.toLowerCase().includes(term)
+                    );
+                }
+                return results;
+            }, [searchTerm, filterClass]);
+
+            const getRecommendationColor = (recommendation) => {
+                switch (recommendation) {
+                    case 'STOP': case 'COORDINATE STOP': return 'bg-red-100 text-red-800 border-red-300';
+                    case 'CONTINUE': return 'bg-green-100 text-green-800 border-green-300';
+                    case 'HOLD': return 'bg-orange-100 text-orange-800 border-orange-300';
+                    case 'ADJUST': case 'COORDINATE': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+                    case 'CONTINUE + STRESS': return 'bg-blue-100 text-blue-800 border-blue-300';
+                    default: return 'bg-gray-100 text-gray-800 border-gray-300';
+                }
+            };
+
+            const getRecommendationIcon = (recommendation) => {
+                switch (recommendation) {
+                    case 'STOP': case 'COORDINATE STOP': return '⛔';
+                    case 'CONTINUE': return '✅';
+                    case 'HOLD': return '⏸️';
+                    case 'ADJUST': case 'COORDINATE': return '⚠️';
+                    case 'CONTINUE + STRESS': return '💉';
+                    default: return 'ℹ️';
+                }
+            };
+
+            return (
+                <>
+                    {/* Non-bypassable disclaimer — rendered before anything else */}
+                    {!disclaimerAccepted && (
+                        <DisclaimerModal onAccept={() => setDisclaimerAccepted(true)} />
+                    )}
+
+                    {/* Error / Feedback Modal */}
+                    {reportMed !== null && (
+                        <ReportErrorModal
+                            med={typeof reportMed === 'object' && reportMed !== false ? reportMed : null}
+                            defaultTab={reportMed === 'missing' ? 'missing' : 'error'}
+                            onClose={() => setReportMed(null)}
+                        />
+                    )}
+
+                    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 pb-24">
+                        <div className="max-w-6xl mx-auto">
+
+                            {/* Header */}
+                            <div className="bg-white shadow-lg p-4 md:p-6 mb-2 md:mb-6 md:rounded-lg">
+                                <div className="flex items-start justify-between gap-3 mb-2">
+                                    <div>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <h1 className="text-2xl md:text-4xl font-bold text-indigo-900">PreOp Medication Lookup</h1>
+                                            <span className="beta-badge inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-2.5 py-1 rounded-full uppercase tracking-wide">🧪 Beta</span>
+                                        </div>
+                                        <p className="text-sm md:text-base text-gray-600 mt-1">Search medications for perioperative management</p>
+                                    </div>
+                                </div>
+
+                                {/* Persistent beta + disclaimer strip */}
+                                <div className="mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 flex items-start gap-2">
+                                    <span className="text-amber-500 text-sm flex-shrink-0 mt-0.5">⚠️</span>
+                                    <p className="text-xs text-amber-800 leading-relaxed">
+                                        <strong>Beta — not validated for sole clinical use.</strong> All recommendations require clinician verification. Always confirm with your surgical team, anesthesiologist, and prescribing physicians. <span className="font-semibold">Best clinical judgment must prevail.</span> (02/26)
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Search and Filter — Sticky */}
+                            <div className="bg-white shadow-lg p-3 md:p-6 mb-2 md:mb-6 md:rounded-lg sticky top-0 z-10">
+                                <div className="grid gap-3">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">🔍 Search Medication</label>
+                                        <input
+                                            type="search"
+                                            inputMode="search"
+                                            placeholder="Enter medication name..."
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                            className="w-full px-4 py-4 md:py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base md:text-lg shadow-sm"
+                                            style={{fontSize: '16px'}}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">📋 Filter by Class</label>
+                                        <select
+                                            value={filterClass}
+                                            onChange={e => setFilterClass(e.target.value)}
+                                            className="w-full px-4 py-4 md:py-3 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 text-base md:text-lg shadow-sm"
+                                            style={{fontSize: '16px'}}
+                                        >
+                                            {drugClasses.map(cls => <option key={cls} value={cls}>{cls}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                                {searchTerm && (
+                                    <p className="mt-3 text-sm font-medium text-gray-600 bg-gray-50 px-3 py-2 rounded-lg">
+                                        📊 Found {filteredMeds.length} medication{filteredMeds.length !== 1 ? 's' : ''}
+                                    </p>
+                                )}
+                            </div>
+
+                            {/* Results */}
+                            <div className="px-2 md:px-0">
+                                {filteredMeds.length === 0 ? (
+                                    <div className="bg-white rounded-lg shadow-lg p-8 md:p-12 text-center">
+                                        <div className="text-6xl mb-4">🔍</div>
+                                        <p className="text-lg md:text-xl text-gray-600 mb-2 font-semibold">No medications found</p>
+                                        <p className="text-sm md:text-base text-gray-500">Try a different search term or drug class</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid gap-3 md:gap-4">
+                                        {filteredMeds.map((med, idx) => (
+                                            <div
+                                                key={idx}
+                                                className="border-2 rounded-lg cursor-pointer hover:shadow-lg hover:border-indigo-400 transition-all duration-200 bg-white active:scale-[0.99] select-none overflow-hidden"
+                                                style={{touchAction: 'manipulation'}}
+                                            >
+                                                {/* Card header — clickable to expand */}
+                                                <div
+                                                    className="p-4 md:p-5"
+                                                    onClick={() => setSelectedMed(selectedMed?.name === med.name && selectedMed?.drugClass === med.drugClass ? null : med)}
+                                                >
+                                                    <div className="flex items-start gap-3 md:gap-4">
+                                                        <div className="flex-1 min-w-0">
+                                                            <h3 className="text-lg md:text-xl font-bold text-gray-900 break-words">{med.name}</h3>
+                                                            {med.tradeName && <p className="text-sm md:text-base text-gray-600 mt-1 break-words">({med.tradeName})</p>}
+                                                            <p className="text-xs md:text-sm text-gray-500 mt-2 font-medium">{med.drugClass}</p>
+                                                            {!(selectedMed?.name === med.name && selectedMed?.drugClass === med.drugClass) && (
+                                                                <p className="text-xs text-indigo-500 font-semibold mt-1.5 flex items-center gap-1">
+                                                                    <span>👆</span> Tap for timing &amp; rationale
+                                                                </p>
+                                                            )}
+                                                        </div>
+                                                        <div className={`px-3 py-2 md:px-4 md:py-3 rounded-lg font-bold text-sm md:text-base border-2 ${getRecommendationColor(med.recommendation)} flex-shrink-0 min-w-[90px] md:min-w-[110px] text-center`}>
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <div className="text-lg md:text-xl">{getRecommendationIcon(med.recommendation)}</div>
+                                                                <div className="text-xs md:text-sm leading-tight">{med.recommendation}</div>
+                                                                <div className={`text-[10px] md:text-xs font-semibold mt-0.5 px-1.5 py-0.5 rounded-full ${selectedMed?.name === med.name && selectedMed?.drugClass === med.drugClass ? 'bg-white/40 text-current' : 'bg-white/50 text-current'}`}>
+                                                                    {selectedMed?.name === med.name && selectedMed?.drugClass === med.drugClass ? '▲ Hide' : '▼ Details'}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Expanded details */}
+                                                {selectedMed?.name === med.name && selectedMed?.drugClass === med.drugClass && (
+                                                    <div className="px-4 pb-4 md:px-5 md:pb-5 border-t-2 border-gray-100 pt-4">
+                                                        <div className="grid gap-3">
+                                                            <div className="bg-indigo-50 p-4 rounded-lg border border-indigo-200">
+                                                                <p className="text-xs md:text-sm font-bold text-indigo-900 mb-2 uppercase tracking-wide">⏰ Timing</p>
+                                                                <p className="text-base md:text-lg text-indigo-800 font-semibold">{med.timing}</p>
+                                                            </div>
+                                                            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                                                <p className="text-xs md:text-sm font-bold text-gray-900 mb-2 uppercase tracking-wide">📝 Rationale</p>
+                                                                <p className="text-sm md:text-base text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{__html: med.rationale}}></p>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                                            <p className="text-sm text-blue-900">
+                                                                <strong>💡 Important:</strong> This recommendation is based on general guidelines. Your surgical team may have specific instructions based on your individual case, surgery type, and medical history.
+                                                            </p>
+                                                        </div>
+
+                                                        {/* Report Error button — per-medication */}
+                                                        <button
+                                                            onClick={e => { e.stopPropagation(); setReportMed(med); }}
+                                                            className="mt-3 w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg border-2 border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 hover:border-orange-300 transition-all text-sm font-semibold"
+                                                        >
+                                                            🚩 Report an Error with This Entry
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Footer */}
+                            <div className="mt-8 text-center text-sm text-gray-600 px-4">
+                                <p>For questions or concerns, contact your surgical team or anesthesiologist</p>
+                                <p className="mt-1">Last updated: February 2026</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Floating action buttons */}
+                    <div className="fixed bottom-5 right-4 z-40 flex flex-col gap-2 items-end">
+                        <button
+                            onClick={() => setReportMed('missing')}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-full shadow-xl font-semibold text-sm flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                            title="Report a missing medication"
+                        >
+                            ➕ Missing Medication
+                        </button>
+                        <button
+                            onClick={() => setReportMed(false)}
+                            className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2.5 rounded-full shadow-xl font-semibold text-sm flex items-center gap-2 transition-all hover:scale-105 active:scale-95"
+                            title="Report a general error"
+                        >
+                            🚩 Report Error
+                        </button>
+                    </div>
+                </>
+            );
+        }
+
+        ReactDOM.render(<MedicationLookupApp />, document.getElementById('root'));
+
+        // PWA — Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js').catch(() => {});
+            });
+        }
+
+        // PWA Install Prompt
+        let deferredPrompt;
+        const installButton = document.createElement('button');
+        installButton.textContent = '📱 Install App';
+        installButton.className = 'fixed bottom-4 left-4 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-lg hover:bg-indigo-700 transition-all duration-200 font-semibold z-50';
+        installButton.style.display = 'none';
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installButton.style.display = 'block';
+            document.body.appendChild(installButton);
+        });
+
+        installButton.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                deferredPrompt = null;
+                installButton.style.display = 'none';
+            }
+        });
+
+        window.addEventListener('appinstalled', () => {
+            installButton.style.display = 'none';
+        });
+    </script>
+</body>
+</html>
